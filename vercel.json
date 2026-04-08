@@ -1,0 +1,6 @@
+{
+  "installCommand": "cd dynamic-torque-web && npm install",
+  "buildCommand": "cd dynamic-torque-web && npm run build",
+  "outputDirectory": "dynamic-torque-web/dist",
+  "framework": "vite"
+}

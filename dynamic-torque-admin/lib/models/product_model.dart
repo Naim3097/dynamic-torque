@@ -51,6 +51,69 @@ class Product {
     required this.updatedAt,
   });
 
+  factory Product.fromJson(Map<String, dynamic> json) {
+    final specs = json['specifications'];
+    final specMap = <String, String>{};
+    if (specs is Map) {
+      specs.forEach((k, v) => specMap[k.toString()] = v.toString());
+    }
+
+    return Product(
+      id: json['id'] as String,
+      name: json['name'] as String,
+      slug: json['slug'] as String,
+      sku: json['sku'] as String,
+      category: json['category_slug'] as String,
+      description: json['description'] as String? ?? '',
+      specifications: specMap,
+      compatibleVehicles: List<String>.from(json['compatible_vehicles'] ?? []),
+      compatibleGearboxes: List<String>.from(json['compatible_gearboxes'] ?? []),
+      price: (json['price'] as num).toDouble(),
+      currency: json['currency'] as String? ?? 'MYR',
+      wholesalePrice: json['wholesale_price'] != null
+          ? (json['wholesale_price'] as num).toDouble()
+          : null,
+      minWholesaleQty: json['min_wholesale_qty'] as int?,
+      images: List<String>.from(json['images'] ?? []),
+      thumbnailUrl: json['thumbnail_url'] as String? ?? '',
+      stockQty: json['stock_qty'] as int? ?? 0,
+      stockStatus: json['stock_status'] as String? ?? 'in_stock',
+      lowStockThreshold: json['low_stock_threshold'] as int? ?? 10,
+      costPrice: json['cost_price'] != null
+          ? (json['cost_price'] as num).toDouble()
+          : null,
+      tags: List<String>.from(json['tags'] ?? []),
+      isFeatured: json['is_featured'] as bool? ?? false,
+      isActive: json['is_active'] as bool? ?? true,
+      createdAt: DateTime.parse(json['created_at'] as String),
+      updatedAt: DateTime.parse(json['updated_at'] as String),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'slug': slug,
+        'sku': sku,
+        'category_slug': category,
+        'description': description,
+        'specifications': specifications,
+        'compatible_vehicles': compatibleVehicles,
+        'compatible_gearboxes': compatibleGearboxes,
+        'price': price,
+        'currency': currency,
+        'wholesale_price': wholesalePrice,
+        'min_wholesale_qty': minWholesaleQty,
+        'images': images,
+        'thumbnail_url': thumbnailUrl,
+        'stock_qty': stockQty,
+        'stock_status': stockStatus,
+        'low_stock_threshold': lowStockThreshold,
+        'cost_price': costPrice,
+        'tags': tags,
+        'is_featured': isFeatured,
+        'is_active': isActive,
+      };
+
   Product copyWith({
     String? id,
     String? name,

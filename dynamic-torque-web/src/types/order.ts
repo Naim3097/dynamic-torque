@@ -2,17 +2,23 @@ export type OrderStatus =
   | 'pending'
   | 'confirmed'
   | 'processing'
-  | 'dispatched'
+  | 'shipped'
   | 'delivered'
   | 'cancelled';
 
+export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'refunded';
+
+export type PaymentMethod = 'cod' | 'bank_transfer' | 'online';
+
 export interface OrderItem {
+  id?: string;
   productId: string;
   productName: string;
   sku: string;
   quantity: number;
   unitPrice: number;
   total: number;
+  thumbnailUrl?: string;
 }
 
 export interface ShippingAddress {
@@ -31,16 +37,22 @@ export interface ShippingAddress {
 export interface Order {
   id: string;
   orderNumber: string;
+  userId: string;
+  accountType: 'b2c' | 'b2b';
   items: OrderItem[];
   shipping: ShippingAddress;
   subtotal: number;
+  discount: number;
   shippingCost: number;
+  tax: number;
   total: number;
   currency: string;
+  paymentMethod: PaymentMethod;
+  paymentStatus: PaymentStatus;
   status: OrderStatus;
+  trackingNumber?: string;
+  poNumber?: string;
   notes?: string;
-  paymentMethod: 'cod' | 'bank_transfer' | 'online';
-  paymentStatus: 'unpaid' | 'paid' | 'refunded';
   createdAt: string;
   updatedAt: string;
 }

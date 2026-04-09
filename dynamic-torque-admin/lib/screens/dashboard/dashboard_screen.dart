@@ -2,140 +2,187 @@ import 'package:flutter/material.dart';
 import '../../config/theme.dart';
 import '../../widgets/common/stat_card.dart';
 import '../../widgets/common/status_badge.dart';
-import '../../services/seed_data.dart';
+import '../../services/product_service.dart';
+import '../../services/order_service.dart';
+import '../../models/product_model.dart';
+import '../../models/order_model.dart';
 import '../../utils/formatters.dart';
 
-class DashboardScreen extends StatelessWidget {
+class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final orders = SeedData.orders;
-    final products = SeedData.products;
+  State<DashboardScreen> createState() => _DashboardScreenState();
+}
 
-    final totalRevenue =
-        orders.where((o) => o.paymentStatus == 'paid').fold(0.0, (s, o) => s + o.total);
+class _DashboardScreenState extends State<DashboardScreen> {
+  List<Product> _products = [];
+  List<Order> _orders = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final results = await Future.wait([
+        ProductService.instance.fetchAll(),
+        OrderService.instance.fetchAll(),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _products = results[0] as List<Product>;
+        _orders = results[1] as List<Order>;
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint('Dashboard load error: $e');
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    final orders = _orders;
+    final products = _products;
+
+    final totalRevenue = orders
+        .where((o) => o.paymentStatus == 'paid')
+        .fold(0.0, (s, o) => s + o.total);
     final pendingOrders = orders.where((o) => o.status == 'pending').length;
-    final lowStock = products.where((p) => p.stockQty <= p.lowStockThreshold).length;
+    final lowStock =
+        products.where((p) => p.stockQty <= p.lowStockThreshold).length;
+    final now = DateTime.now();
     final todayOrders = orders
         .where((o) =>
-            o.createdAt.day == DateTime.now().day &&
-            o.createdAt.month == DateTime.now().month &&
-            o.createdAt.year == DateTime.now().year)
+            o.createdAt.day == now.day &&
+            o.createdAt.month == now.month &&
+            o.createdAt.year == now.year)
         .length;
 
-    // Recent orders (last 5)
     final recentOrders = List.of(orders)
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-    // Top products by stock movement
     final topProducts = List.of(products)
       ..sort((a, b) => a.stockQty.compareTo(b.stockQty));
     final lowStockProducts = topProducts.take(5).toList();
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // KPI Cards
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final crossAxisCount = constraints.maxWidth > 900
-                  ? 4
-                  : constraints.maxWidth > 600
-                      ? 2
-                      : 1;
-              final cardWidth =
-                  (constraints.maxWidth - (crossAxisCount - 1) * 16) /
-                      crossAxisCount;
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // KPI Cards
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final crossAxisCount = constraints.maxWidth > 900
+                    ? 4
+                    : constraints.maxWidth > 600
+                        ? 2
+                        : 1;
+                final cardWidth =
+                    (constraints.maxWidth - (crossAxisCount - 1) * 16) /
+                        crossAxisCount;
 
-              return Wrap(
-                spacing: 16,
-                runSpacing: 16,
-                children: [
-                  SizedBox(
-                    width: cardWidth,
-                    child: StatCard(
-                      title: 'Total Revenue',
-                      value: formatPrice(totalRevenue),
-                      icon: Icons.trending_up,
-                      iconColor: AppColors.success,
-                      subtitle: 'From paid orders',
-                    ),
-                  ),
-                  SizedBox(
-                    width: cardWidth,
-                    child: StatCard(
-                      title: 'Orders Today',
-                      value: '$todayOrders',
-                      icon: Icons.receipt_long,
-                      iconColor: AppColors.blueBright,
-                      subtitle: '${orders.length} total',
-                    ),
-                  ),
-                  SizedBox(
-                    width: cardWidth,
-                    child: StatCard(
-                      title: 'Low Stock Items',
-                      value: '$lowStock',
-                      icon: Icons.warning_amber_rounded,
-                      iconColor: lowStock > 0 ? AppColors.warning : AppColors.success,
-                      subtitle: '${products.length} total SKUs',
-                    ),
-                  ),
-                  SizedBox(
-                    width: cardWidth,
-                    child: StatCard(
-                      title: 'Pending Orders',
-                      value: '$pendingOrders',
-                      icon: Icons.hourglass_empty_rounded,
-                      iconColor:
-                          pendingOrders > 0 ? AppColors.warning : AppColors.success,
-                      subtitle: 'Awaiting confirmation',
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
-
-          const SizedBox(height: 32),
-
-          // Two-column layout: Recent Orders + Low Stock
-          LayoutBuilder(
-            builder: (context, constraints) {
-              if (constraints.maxWidth > 800) {
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                return Wrap(
+                  spacing: 16,
+                  runSpacing: 16,
                   children: [
-                    Expanded(
-                      flex: 3,
-                      child: _buildRecentOrders(recentOrders),
+                    SizedBox(
+                      width: cardWidth,
+                      child: StatCard(
+                        title: 'Total Revenue',
+                        value: formatPrice(totalRevenue),
+                        icon: Icons.trending_up,
+                        iconColor: AppColors.success,
+                        subtitle: 'From paid orders',
+                      ),
                     ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      flex: 2,
-                      child: _buildLowStock(lowStockProducts),
+                    SizedBox(
+                      width: cardWidth,
+                      child: StatCard(
+                        title: 'Orders Today',
+                        value: '$todayOrders',
+                        icon: Icons.receipt_long,
+                        iconColor: AppColors.blueBright,
+                        subtitle: '${orders.length} total',
+                      ),
+                    ),
+                    SizedBox(
+                      width: cardWidth,
+                      child: StatCard(
+                        title: 'Low Stock Items',
+                        value: '$lowStock',
+                        icon: Icons.warning_amber_rounded,
+                        iconColor:
+                            lowStock > 0 ? AppColors.warning : AppColors.success,
+                        subtitle: '${products.length} total SKUs',
+                      ),
+                    ),
+                    SizedBox(
+                      width: cardWidth,
+                      child: StatCard(
+                        title: 'Pending Orders',
+                        value: '$pendingOrders',
+                        icon: Icons.hourglass_empty_rounded,
+                        iconColor: pendingOrders > 0
+                            ? AppColors.warning
+                            : AppColors.success,
+                        subtitle: 'Awaiting confirmation',
+                      ),
                     ),
                   ],
                 );
-              }
-              return Column(
-                children: [
-                  _buildRecentOrders(recentOrders),
-                  const SizedBox(height: 16),
-                  _buildLowStock(lowStockProducts),
-                ],
-              );
-            },
-          ),
-        ],
+              },
+            ),
+
+            const SizedBox(height: 32),
+
+            // Two-column layout: Recent Orders + Low Stock
+            LayoutBuilder(
+              builder: (context, constraints) {
+                if (constraints.maxWidth > 800) {
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        flex: 3,
+                        child: _buildRecentOrders(recentOrders.take(5).toList()),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        flex: 2,
+                        child: _buildLowStock(lowStockProducts),
+                      ),
+                    ],
+                  );
+                }
+                return Column(
+                  children: [
+                    _buildRecentOrders(recentOrders.take(5).toList()),
+                    const SizedBox(height: 16),
+                    _buildLowStock(lowStockProducts),
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildRecentOrders(List orders) {
+  Widget _buildRecentOrders(List<Order> orders) {
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
@@ -167,60 +214,67 @@ class DashboardScreen extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 20),
-          ...orders.map((order) {
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: Row(
-                children: [
-                  Expanded(
-                    flex: 2,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          order.orderNumber,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.white,
-                            fontFamily: 'monospace',
+          if (orders.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 16),
+              child: Text('No orders yet',
+                  style: TextStyle(fontSize: 13, color: AppColors.textMuted)),
+            )
+          else
+            ...orders.map((order) {
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      flex: 2,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            order.orderNumber,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.white,
+                              fontFamily: 'monospace',
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          order.shipping.fullName,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: AppColors.textMuted,
+                          const SizedBox(height: 2),
+                          Text(
+                            order.shipping.fullName,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textMuted,
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  StatusBadge(status: order.status),
-                  const SizedBox(width: 16),
-                  SizedBox(
-                    width: 80,
-                    child: Text(
-                      formatPrice(order.total),
-                      textAlign: TextAlign.right,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.white,
+                        ],
                       ),
                     ),
-                  ),
-                ],
-              ),
-            );
-          }),
+                    StatusBadge(status: order.status),
+                    const SizedBox(width: 16),
+                    SizedBox(
+                      width: 80,
+                      child: Text(
+                        formatPrice(order.total),
+                        textAlign: TextAlign.right,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.white,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
         ],
       ),
     );
   }
 
-  Widget _buildLowStock(List products) {
+  Widget _buildLowStock(List<Product> products) {
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
@@ -250,7 +304,8 @@ class DashboardScreen extends StatelessWidget {
             )
           else
             ...products.map((p) {
-              final ratio = p.stockQty / (p.lowStockThreshold * 3).clamp(1, 999);
+              final ratio =
+                  p.stockQty / (p.lowStockThreshold * 3).clamp(1, 999);
               final barColor = ratio < 0.3
                   ? AppColors.error
                   : ratio < 0.6

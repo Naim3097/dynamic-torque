@@ -1,37 +1,19 @@
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import { ProductGrid } from '@/components/product/ProductGrid';
-import { products, categories } from '@/data/products';
+import { LoadingPulse } from '@/components/ui';
+import { categories } from '@/data/products';
+import { useProducts } from '@/hooks/useProducts';
 import type { ProductCategory } from '@/types/product';
-
-type SortOption = 'newest' | 'price-asc' | 'price-desc';
+import type { ProductSort } from '@/services/productService';
 
 export function CatalogPage() {
   const [selectedCategory, setSelectedCategory] = useState<ProductCategory | 'all'>('all');
-  const [sort, setSort] = useState<SortOption>('newest');
+  const [sort, setSort] = useState<ProductSort>('newest');
 
-  const filtered = useMemo(() => {
-    let result = products.filter(p => p.isActive);
-
-    if (selectedCategory !== 'all') {
-      result = result.filter(p => p.category === selectedCategory);
-    }
-
-    switch (sort) {
-      case 'price-asc':
-        result = [...result].sort((a, b) => a.price - b.price);
-        break;
-      case 'price-desc':
-        result = [...result].sort((a, b) => b.price - a.price);
-        break;
-      case 'newest':
-      default:
-        result = [...result].sort(
-          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        );
-    }
-
-    return result;
-  }, [selectedCategory, sort]);
+  const { data: products = [], isLoading } = useProducts({
+    category: selectedCategory === 'all' ? undefined : selectedCategory,
+    sort,
+  });
 
   return (
     <div className="container-main" style={{ paddingTop: '2.5rem', paddingBottom: '4rem' }}>
@@ -54,7 +36,7 @@ export function CatalogPage() {
           >
             All
           </button>
-          {categories.map(cat => (
+          {categories.map((cat) => (
             <button
               key={cat.slug}
               onClick={() => setSelectedCategory(cat.slug as ProductCategory)}
@@ -71,22 +53,23 @@ export function CatalogPage() {
 
         <div className="flex items-center gap-4 shrink-0">
           <span className="text-[13px] text-text-muted tabular-nums">
-            {filtered.length} {filtered.length === 1 ? 'item' : 'items'}
+            {products.length} {products.length === 1 ? 'item' : 'items'}
           </span>
           <select
             value={sort}
-            onChange={e => setSort(e.target.value as SortOption)}
+            onChange={(e) => setSort(e.target.value as ProductSort)}
             className="h-9 bg-surface text-[13px] text-text-muted rounded-md px-3.5 border border-white/5 focus:border-blue-bright/50 focus:outline-none cursor-pointer transition-colors"
           >
             <option value="newest">Newest</option>
             <option value="price-asc">Price: Low to High</option>
             <option value="price-desc">Price: High to Low</option>
+            <option value="name">Name: A–Z</option>
           </select>
         </div>
       </div>
 
       {/* Grid */}
-      <ProductGrid products={filtered} />
+      {isLoading ? <LoadingPulse /> : <ProductGrid products={products} />}
     </div>
   );
 }

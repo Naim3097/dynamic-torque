@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../config/theme.dart';
 import '../../models/user_model.dart';
-import '../../services/seed_data.dart';
+import '../../services/customer_service.dart';
 import '../../utils/formatters.dart';
 
 class CustomerListScreen extends StatefulWidget {
@@ -14,9 +14,31 @@ class CustomerListScreen extends StatefulWidget {
 class _CustomerListScreenState extends State<CustomerListScreen> {
   String _search = '';
   String _typeFilter = 'all';
+  List<AppUser> _allCustomers = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final data = await CustomerService.instance.fetchAll();
+      if (!mounted) return;
+      setState(() {
+        _allCustomers = data;
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint('Customer fetch error: $e');
+      if (mounted) setState(() => _loading = false);
+    }
+  }
 
   List<AppUser> get _filtered {
-    var list = SeedData.customers;
+    var list = _allCustomers;
     if (_search.isNotEmpty) {
       final q = _search.toLowerCase();
       list = list
@@ -34,6 +56,9 @@ class _CustomerListScreenState extends State<CustomerListScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
     final customers = _filtered;
 
     return Padding(

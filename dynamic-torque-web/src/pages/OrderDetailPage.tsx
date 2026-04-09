@@ -1,14 +1,14 @@
 import { useParams, Link } from 'react-router-dom';
-import { useOrderStore } from '@/stores/orderStore';
+import { useOrder } from '@/hooks/useOrders';
 import { formatPrice } from '@/data/products';
-import { Button } from '@/components/ui';
+import { Button, LoadingPulse } from '@/components/ui';
 import type { OrderStatus } from '@/types/order';
 
 const statusLabels: Record<OrderStatus, string> = {
   pending: 'Pending',
   confirmed: 'Confirmed',
   processing: 'Processing',
-  dispatched: 'Dispatched',
+  shipped: 'Shipped',
   delivered: 'Delivered',
   cancelled: 'Cancelled',
 };
@@ -17,16 +17,24 @@ const statusColors: Record<OrderStatus, string> = {
   pending: 'text-warning',
   confirmed: 'text-blue-bright',
   processing: 'text-blue-bright',
-  dispatched: 'text-blue-light',
+  shipped: 'text-blue-light',
   delivered: 'text-success',
   cancelled: 'text-error',
 };
 
-const steps: OrderStatus[] = ['pending', 'confirmed', 'processing', 'dispatched', 'delivered'];
+const steps: OrderStatus[] = ['pending', 'confirmed', 'processing', 'shipped', 'delivered'];
 
 export function OrderDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const order = useOrderStore(s => s.getOrder(id || ''));
+  const { data: order, isLoading } = useOrder(id);
+
+  if (isLoading) {
+    return (
+      <div className="container-main" style={{ paddingTop: '6rem' }}>
+        <LoadingPulse />
+      </div>
+    );
+  }
 
   if (!order) {
     return (
@@ -53,7 +61,14 @@ export function OrderDetailPage() {
         <div>
           <h1 className="font-heading font-bold text-3xl text-white">{order.orderNumber}</h1>
           <p className="text-sm text-text-muted mt-1">
-            Placed {new Date(order.createdAt).toLocaleDateString('en-MY', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+            Placed{' '}
+            {new Date(order.createdAt).toLocaleDateString('en-MY', {
+              day: 'numeric',
+              month: 'long',
+              year: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+            })}
           </p>
         </div>
         <span className={`text-sm font-semibold ${statusColors[order.status]}`}>
@@ -97,15 +112,20 @@ export function OrderDetailPage() {
         <div className="lg:col-span-2">
           <h2 className="font-heading font-bold text-lg text-white mb-4">Items</h2>
           <div className="flex flex-col gap-2 mb-6">
-            {order.items.map(item => (
-              <div key={item.productId} className="flex items-center justify-between bg-bg-secondary rounded-md p-5">
+            {order.items.map((item) => (
+              <div
+                key={item.id ?? item.productId}
+                className="flex items-center justify-between bg-bg-secondary rounded-md p-5"
+              >
                 <div className="min-w-0">
                   <p className="text-sm text-white font-medium truncate">{item.productName}</p>
                   <span className="text-[11px] text-text-muted/50 font-mono">{item.sku}</span>
                 </div>
                 <div className="text-right shrink-0 ml-4">
                   <p className="text-sm text-white font-medium tabular-nums">{formatPrice(item.total)}</p>
-                  <span className="text-[11px] text-text-muted">{item.quantity} x {formatPrice(item.unitPrice)}</span>
+                  <span className="text-[11px] text-text-muted">
+                    {item.quantity} x {formatPrice(item.unitPrice)}
+                  </span>
                 </div>
               </div>
             ))}
@@ -116,9 +136,17 @@ export function OrderDetailPage() {
               <span className="text-text-muted">Subtotal</span>
               <span className="text-white tabular-nums">{formatPrice(order.subtotal)}</span>
             </div>
+            {order.discount > 0 && (
+              <div className="flex justify-between text-sm">
+                <span className="text-text-muted">Discount</span>
+                <span className="text-white tabular-nums">-{formatPrice(order.discount)}</span>
+              </div>
+            )}
             <div className="flex justify-between text-sm">
               <span className="text-text-muted">Shipping</span>
-              <span className="text-white tabular-nums">{order.shippingCost === 0 ? 'Free' : formatPrice(order.shippingCost)}</span>
+              <span className="text-white tabular-nums">
+                {order.shippingCost === 0 ? 'Free' : formatPrice(order.shippingCost)}
+              </span>
             </div>
             <div className="flex justify-between text-sm font-bold mt-3 pt-3 border-t border-white/[0.06]">
               <span className="text-white">Total</span>
@@ -136,7 +164,9 @@ export function OrderDetailPage() {
               {order.shipping.company && <p>{order.shipping.company}</p>}
               <p>{order.shipping.addressLine1}</p>
               {order.shipping.addressLine2 && <p>{order.shipping.addressLine2}</p>}
-              <p>{order.shipping.city}, {order.shipping.state} {order.shipping.postalCode}</p>
+              <p>
+                {order.shipping.city}, {order.shipping.state} {order.shipping.postalCode}
+              </p>
               <p>{order.shipping.country}</p>
               <p className="mt-2">{order.shipping.phone}</p>
             </div>
@@ -146,13 +176,38 @@ export function OrderDetailPage() {
             <h2 className="font-heading font-bold text-lg text-white mb-4">Payment</h2>
             <div className="text-sm text-text-muted">
               <p>
-                {order.paymentMethod === 'bank_transfer' ? 'Bank Transfer' : order.paymentMethod === 'cod' ? 'Cash on Delivery' : 'Online Payment'}
+                {order.paymentMethod === 'bank_transfer'
+                  ? 'Bank Transfer'
+                  : order.paymentMethod === 'cod'
+                  ? 'Cash on Delivery'
+                  : 'Online Payment'}
               </p>
-              <p className={`font-medium mt-1 ${order.paymentStatus === 'paid' ? 'text-success' : order.paymentStatus === 'refunded' ? 'text-error' : 'text-warning'}`}>
-                {order.paymentStatus === 'paid' ? 'Paid' : order.paymentStatus === 'refunded' ? 'Refunded' : 'Unpaid'}
+              <p
+                className={`font-medium mt-1 ${
+                  order.paymentStatus === 'paid'
+                    ? 'text-success'
+                    : order.paymentStatus === 'refunded'
+                    ? 'text-error'
+                    : 'text-warning'
+                }`}
+              >
+                {order.paymentStatus === 'paid'
+                  ? 'Paid'
+                  : order.paymentStatus === 'refunded'
+                  ? 'Refunded'
+                  : order.paymentStatus === 'failed'
+                  ? 'Payment failed'
+                  : 'Pending'}
               </p>
             </div>
           </div>
+
+          {order.trackingNumber && (
+            <div>
+              <h2 className="font-heading font-bold text-lg text-white mb-4">Tracking</h2>
+              <p className="text-sm text-white font-mono">{order.trackingNumber}</p>
+            </div>
+          )}
 
           {order.notes && (
             <div>

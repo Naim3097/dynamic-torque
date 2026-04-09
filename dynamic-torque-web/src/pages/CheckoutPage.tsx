@@ -2,20 +2,19 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useCartStore } from '@/stores/cartStore';
 import { useAuthStore } from '@/stores/authStore';
-import { useOrderStore } from '@/stores/orderStore';
-import { products, formatPrice } from '@/data/products';
+import { placeOrder } from '@/services/orderService';
+import { formatPrice } from '@/data/products';
 import { Input, Button } from '@/components/ui';
-import type { ShippingAddress, OrderItem, Order } from '@/types/order';
+import type { ShippingAddress, PaymentMethod } from '@/types/order';
 
 const SHIPPING_FLAT = 15;
 
 export function CheckoutPage() {
   const navigate = useNavigate();
-  const items = useCartStore(s => s.items);
-  const subtotal = useCartStore(s => s.subtotal());
-  const clearCart = useCartStore(s => s.clearCart);
-  const user = useAuthStore(s => s.user);
-  const placeOrder = useOrderStore(s => s.placeOrder);
+  const items = useCartStore((s) => s.items);
+  const subtotal = useCartStore((s) => s.subtotal());
+  const clearCart = useCartStore((s) => s.clearCart);
+  const user = useAuthStore((s) => s.user);
 
   const [form, setForm] = useState<ShippingAddress>({
     fullName: user?.fullName || '',
@@ -29,10 +28,11 @@ export function CheckoutPage() {
     postalCode: '',
     country: 'Malaysia',
   });
-  const [paymentMethod, setPaymentMethod] = useState<Order['paymentMethod']>('bank_transfer');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('bank_transfer');
   const [notes, setNotes] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   if (items.length === 0) {
     return (
@@ -50,9 +50,13 @@ export function CheckoutPage() {
   const total = subtotal + shippingCost;
 
   function updateField(field: keyof ShippingAddress, value: string) {
-    setForm(prev => ({ ...prev, [field]: value }));
+    setForm((prev) => ({ ...prev, [field]: value }));
     if (errors[field]) {
-      setErrors(prev => { const next = { ...prev }; delete next[field]; return next; });
+      setErrors((prev) => {
+        const next = { ...prev };
+        delete next[field];
+        return next;
+      });
     }
   }
 
@@ -70,38 +74,29 @@ export function CheckoutPage() {
     return Object.keys(errs).length === 0;
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setSubmitError(null);
     if (!validate()) return;
 
     setSubmitting(true);
-
-    const orderItems: OrderItem[] = items.map(item => {
-      const product = products.find(p => p.id === item.productId);
-      return {
-        productId: item.productId,
-        productName: product?.name || 'Unknown',
-        sku: product?.sku || '',
-        quantity: item.quantity,
-        unitPrice: item.unitPrice,
-        total: item.unitPrice * item.quantity,
-      };
-    });
-
-    const order = placeOrder({
-      items: orderItems,
-      shipping: form,
-      subtotal,
-      shippingCost,
-      paymentMethod,
-      notes: notes.trim() || undefined,
-    });
-
-    clearCart();
-    navigate(`/order-confirmation/${order.id}`);
+    try {
+      const result = await placeOrder({
+        items,
+        shipping: form,
+        paymentMethod,
+        notes: notes.trim() || undefined,
+      });
+      clearCart();
+      navigate(`/order-confirmation/${result.orderId}`);
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : 'Failed to place order');
+    } finally {
+      setSubmitting(false);
+    }
   }
 
-  const paymentOptions: { value: Order['paymentMethod']; label: string; desc: string }[] = [
+  const paymentOptions: { value: PaymentMethod; label: string; desc: string }[] = [
     { value: 'bank_transfer', label: 'Bank Transfer', desc: 'Pay via online banking or manual transfer' },
     { value: 'cod', label: 'Cash on Delivery', desc: 'Pay when you receive your order' },
     { value: 'online', label: 'Online Payment', desc: 'Credit/debit card (coming soon)' },
@@ -129,7 +124,7 @@ export function CheckoutPage() {
                   <Input
                     label="Full name"
                     value={form.fullName}
-                    onChange={e => updateField('fullName', e.target.value)}
+                    onChange={(e) => updateField('fullName', e.target.value)}
                     placeholder="Your full name"
                   />
                   {errors.fullName && <p className="text-xs text-error mt-1">{errors.fullName}</p>}
@@ -138,7 +133,7 @@ export function CheckoutPage() {
                   <Input
                     label="Company (optional)"
                     value={form.company}
-                    onChange={e => updateField('company', e.target.value)}
+                    onChange={(e) => updateField('company', e.target.value)}
                     placeholder="Workshop / company name"
                   />
                 </div>
@@ -146,7 +141,7 @@ export function CheckoutPage() {
                   <Input
                     label="Phone"
                     value={form.phone}
-                    onChange={e => updateField('phone', e.target.value)}
+                    onChange={(e) => updateField('phone', e.target.value)}
                     placeholder="+60 12-345 6789"
                   />
                   {errors.phone && <p className="text-xs text-error mt-1">{errors.phone}</p>}
@@ -156,7 +151,7 @@ export function CheckoutPage() {
                     label="Email"
                     type="email"
                     value={form.email}
-                    onChange={e => updateField('email', e.target.value)}
+                    onChange={(e) => updateField('email', e.target.value)}
                     placeholder="you@company.com"
                   />
                   {errors.email && <p className="text-xs text-error mt-1">{errors.email}</p>}
@@ -168,7 +163,7 @@ export function CheckoutPage() {
                   <Input
                     label="Address line 1"
                     value={form.addressLine1}
-                    onChange={e => updateField('addressLine1', e.target.value)}
+                    onChange={(e) => updateField('addressLine1', e.target.value)}
                     placeholder="Street address"
                   />
                   {errors.addressLine1 && <p className="text-xs text-error mt-1">{errors.addressLine1}</p>}
@@ -176,7 +171,7 @@ export function CheckoutPage() {
                 <Input
                   label="Address line 2 (optional)"
                   value={form.addressLine2}
-                  onChange={e => updateField('addressLine2', e.target.value)}
+                  onChange={(e) => updateField('addressLine2', e.target.value)}
                   placeholder="Apartment, unit, etc."
                 />
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -184,7 +179,7 @@ export function CheckoutPage() {
                     <Input
                       label="City"
                       value={form.city}
-                      onChange={e => updateField('city', e.target.value)}
+                      onChange={(e) => updateField('city', e.target.value)}
                       placeholder="Kuala Lumpur"
                     />
                     {errors.city && <p className="text-xs text-error mt-1">{errors.city}</p>}
@@ -193,7 +188,7 @@ export function CheckoutPage() {
                     <Input
                       label="State"
                       value={form.state}
-                      onChange={e => updateField('state', e.target.value)}
+                      onChange={(e) => updateField('state', e.target.value)}
                       placeholder="Selangor"
                     />
                     {errors.state && <p className="text-xs text-error mt-1">{errors.state}</p>}
@@ -202,7 +197,7 @@ export function CheckoutPage() {
                     <Input
                       label="Postal code"
                       value={form.postalCode}
-                      onChange={e => updateField('postalCode', e.target.value)}
+                      onChange={(e) => updateField('postalCode', e.target.value)}
                       placeholder="50000"
                     />
                     {errors.postalCode && <p className="text-xs text-error mt-1">{errors.postalCode}</p>}
@@ -215,7 +210,7 @@ export function CheckoutPage() {
             <section>
               <h2 className="font-heading font-bold text-lg text-white mb-6">Payment method</h2>
               <div className="flex flex-col gap-3">
-                {paymentOptions.map(opt => (
+                {paymentOptions.map((opt) => (
                   <label
                     key={opt.value}
                     className={`flex items-start gap-4 p-5 rounded-md cursor-pointer transition-colors border ${
@@ -247,7 +242,7 @@ export function CheckoutPage() {
               <h2 className="font-heading font-bold text-lg text-white mb-4">Order notes (optional)</h2>
               <textarea
                 value={notes}
-                onChange={e => setNotes(e.target.value)}
+                onChange={(e) => setNotes(e.target.value)}
                 rows={3}
                 placeholder="Special instructions, preferred delivery time, etc."
                 className="w-full rounded-md bg-surface px-4 py-3 text-sm text-white placeholder:text-text-muted/40 border border-white/5 focus:border-blue-bright/50 focus:outline-none transition-colors resize-none"
@@ -261,20 +256,16 @@ export function CheckoutPage() {
               <h2 className="font-heading font-bold text-lg text-white mb-6">Order summary</h2>
 
               <div className="flex flex-col gap-3 mb-6">
-                {items.map(item => {
-                  const product = products.find(p => p.id === item.productId);
-                  if (!product) return null;
-                  return (
-                    <div key={item.productId} className="flex justify-between text-sm">
-                      <span className="text-text-muted truncate pr-4">
-                        {product.name} <span className="text-text-muted/50">x{item.quantity}</span>
-                      </span>
-                      <span className="text-white font-medium tabular-nums shrink-0">
-                        {formatPrice(item.unitPrice * item.quantity)}
-                      </span>
-                    </div>
-                  );
-                })}
+                {items.map((item) => (
+                  <div key={item.productId} className="flex justify-between text-sm">
+                    <span className="text-text-muted truncate pr-4">
+                      {item.name} <span className="text-text-muted/50">x{item.quantity}</span>
+                    </span>
+                    <span className="text-white font-medium tabular-nums shrink-0">
+                      {formatPrice(item.unitPrice * item.quantity)}
+                    </span>
+                  </div>
+                ))}
               </div>
 
               <div className="border-t border-white/[0.06] pt-4 flex flex-col gap-2 mb-4">
@@ -300,6 +291,10 @@ export function CheckoutPage() {
                 </div>
               </div>
 
+              {submitError && (
+                <p className="text-xs text-error mb-4">{submitError}</p>
+              )}
+
               <Button
                 type="submit"
                 variant="primary"
@@ -307,15 +302,8 @@ export function CheckoutPage() {
                 className="w-full"
                 disabled={submitting}
               >
-                {submitting ? 'Placing order...' : 'Place Order'}
+                {submitting ? 'Placing order…' : 'Place Order'}
               </Button>
-
-              {!user && (
-                <p className="text-[11px] text-text-muted/60 mt-4 text-center">
-                  <Link to="/login" className="text-blue-bright hover:text-white transition-colors">Sign in</Link>
-                  {' '}to save your details for future orders
-                </p>
-              )}
             </div>
           </div>
         </div>

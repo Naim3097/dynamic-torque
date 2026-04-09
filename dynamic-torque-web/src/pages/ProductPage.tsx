@@ -1,15 +1,25 @@
 import { useParams, Link } from 'react-router-dom';
-import { getProductBySlug, formatPrice, getProductsByCategory } from '@/data/products';
-import { StatusText, Button } from '@/components/ui';
+import { formatPrice } from '@/data/products';
+import { StatusText, Button, LoadingPulse } from '@/components/ui';
 import { ProductGrid } from '@/components/product/ProductGrid';
 import { useCartStore } from '@/stores/cartStore';
+import { useProductBySlug, useProductsByCategory } from '@/hooks/useProducts';
 import { useState } from 'react';
 
 export function ProductPage() {
   const { slug } = useParams<{ slug: string }>();
-  const product = getProductBySlug(slug || '');
-  const addItem = useCartStore(s => s.addItem);
+  const { data: product, isLoading } = useProductBySlug(slug);
+  const { data: categoryProducts = [] } = useProductsByCategory(product?.category);
+  const addItem = useCartStore((s) => s.addItem);
   const [qty, setQty] = useState(1);
+
+  if (isLoading) {
+    return (
+      <div className="container-main" style={{ paddingTop: '6rem' }}>
+        <LoadingPulse />
+      </div>
+    );
+  }
 
   if (!product) {
     return (
@@ -22,10 +32,7 @@ export function ProductPage() {
     );
   }
 
-  const related = getProductsByCategory(product.category)
-    .filter(p => p.id !== product.id)
-    .slice(0, 4);
-
+  const related = categoryProducts.filter((p) => p.id !== product.id).slice(0, 4);
   const specEntries = Object.entries(product.specifications);
 
   return (
@@ -38,7 +45,7 @@ export function ProductPage() {
           to={`/category/${product.category}`}
           className="text-text-muted hover:text-white transition-colors"
         >
-          {product.category.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase())}
+          {product.category.replace('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
         </Link>
         <span className="text-text-muted/40">/</span>
         <span className="text-white truncate">{product.name}</span>
@@ -110,7 +117,7 @@ export function ProductPage() {
               <Button
                 variant="primary"
                 size="md"
-                onClick={() => addItem(product.id, product.price, qty)}
+                onClick={() => addItem(product, qty)}
               >
                 Add to Cart
               </Button>
@@ -150,7 +157,7 @@ export function ProductPage() {
                 }`}
               >
                 <span className="text-text-muted capitalize">{key}</span>
-                <span className="text-white font-medium">{value}</span>
+                <span className="text-white font-medium">{String(value)}</span>
               </div>
             ))}
           </div>

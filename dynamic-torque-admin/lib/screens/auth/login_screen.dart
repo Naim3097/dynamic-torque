@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import '../../config/theme.dart';
 import '../../services/auth_service.dart';
@@ -11,19 +13,39 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _emailController =
-      TextEditingController(text: 'admin@dynamictorque.com');
-  final _passwordController = TextEditingController(text: 'admin123');
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
   String? _error;
+
+  // Rate-limiting state
+  int _failCount = 0;
+  int _cooldownSeconds = 0;
+  Timer? _cooldownTimer;
 
   @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
+    _cooldownTimer?.cancel();
     super.dispose();
   }
 
+  void _startCooldown(int seconds) {
+    setState(() => _cooldownSeconds = seconds);
+    _cooldownTimer?.cancel();
+    _cooldownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      setState(() {
+        _cooldownSeconds--;
+        if (_cooldownSeconds <= 0) {
+          timer.cancel();
+        }
+      });
+    });
+  }
+
   Future<void> _handleLogin() async {
+    if (_cooldownSeconds > 0) return;
+
     setState(() => _error = null);
 
     final auth = context.read<AuthService>();
@@ -33,13 +55,23 @@ class _LoginScreenState extends State<LoginScreen> {
     );
 
     if (!success && mounted) {
-      setState(() => _error = 'Invalid email or password');
+      _failCount++;
+      if (_failCount >= 3) {
+        final delay = min(5 * pow(2, _failCount - 3).toInt(), 60);
+        _startCooldown(delay);
+        setState(() => _error = 'Too many failed attempts. Try again in ${delay}s.');
+      } else {
+        setState(() => _error = 'Invalid credentials or not an admin account');
+      }
+    } else if (success) {
+      _failCount = 0;
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthService>();
+    final isDisabled = auth.loading || _cooldownSeconds > 0;
 
     return Scaffold(
       backgroundColor: AppColors.bgPrimary,
@@ -159,7 +191,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         width: double.infinity,
                         height: 48,
                         child: ElevatedButton(
-                          onPressed: auth.loading ? null : _handleLogin,
+                          onPressed: isDisabled ? null : _handleLogin,
                           child: auth.loading
                               ? const SizedBox(
                                   width: 20,
@@ -169,7 +201,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                     color: AppColors.white,
                                   ),
                                 )
-                              : const Text('Sign in'),
+                              : _cooldownSeconds > 0
+                                  ? Text('Wait ${_cooldownSeconds}s')
+                                  : const Text('Sign in'),
                         ),
                       ),
                     ],
@@ -178,7 +212,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                 const SizedBox(height: 24),
                 Text(
-                  'Demo: admin@dynamictorque.com / admin123',
+                  'Admin access only — contact your Super Admin for credentials.',
                   style: TextStyle(
                     fontSize: 12,
                     color: AppColors.textMuted.withValues(alpha: 0.5),

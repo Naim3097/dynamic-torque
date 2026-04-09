@@ -1,5 +1,6 @@
 import { createBrowserRouter } from 'react-router-dom';
 import { PageWrapper } from '@/components/layout/PageWrapper';
+import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { HomePage } from '@/pages/HomePage';
 import { CatalogPage } from '@/pages/CatalogPage';
 import { CategoryPage } from '@/pages/CategoryPage';
@@ -19,19 +20,28 @@ export const router = createBrowserRouter([
   {
     element: <PageWrapper />,
     children: [
+      // Public
       { path: '/', element: <HomePage /> },
       { path: '/catalog', element: <CatalogPage /> },
       { path: '/category/:slug', element: <CategoryPage /> },
       { path: '/product/:slug', element: <ProductPage /> },
       { path: '/cart', element: <CartPage /> },
-      { path: '/checkout', element: <CheckoutPage /> },
-      { path: '/order-confirmation/:id', element: <OrderConfirmationPage /> },
-      { path: '/orders', element: <OrdersPage /> },
-      { path: '/orders/:id', element: <OrderDetailPage /> },
-      { path: '/account', element: <AccountPage /> },
       { path: '/about', element: <AboutPage /> },
       { path: '/login', element: <LoginPage /> },
       { path: '/register', element: <RegisterPage /> },
+
+      // Protected — require an authenticated Supabase session
+      {
+        element: <ProtectedRoute />,
+        children: [
+          { path: '/checkout', element: <CheckoutPage /> },
+          { path: '/order-confirmation/:id', element: <OrderConfirmationPage /> },
+          { path: '/orders', element: <OrdersPage /> },
+          { path: '/orders/:id', element: <OrderDetailPage /> },
+          { path: '/account', element: <AccountPage /> },
+        ],
+      },
+
       { path: '*', element: <NotFoundPage /> },
     ],
   },

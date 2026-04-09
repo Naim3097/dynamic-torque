@@ -1,6 +1,7 @@
 import { Link, NavLink } from 'react-router-dom';
 import { useCartStore } from '@/stores/cartStore';
 import { useAuthStore } from '@/stores/authStore';
+import { NotificationDropdown } from '@/components/notifications/NotificationDropdown';
 import logo from '@/assets/logo.png';
 import { useState } from 'react';
 
@@ -47,6 +48,7 @@ export function Navbar() {
               Orders
             </NavLink>
           )}
+          {user && <NotificationDropdown />}
           <Link to="/cart" className={linkClass(false)}>
             Cart{totalItems > 0 ? ` (${totalItems})` : ''}
           </Link>

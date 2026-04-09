@@ -1,12 +1,16 @@
 import { useParams, Link } from 'react-router-dom';
 import { ProductGrid } from '@/components/product/ProductGrid';
-import { getProductsByCategory, getCategoryBySlug } from '@/data/products';
+import { LoadingPulse } from '@/components/ui';
+import { getCategoryBySlug } from '@/data/products';
+import { useProductsByCategory } from '@/hooks/useProducts';
 import type { ProductCategory } from '@/types/product';
 
 export function CategoryPage() {
   const { slug } = useParams<{ slug: string }>();
   const category = getCategoryBySlug(slug || '');
-  const categoryProducts = getProductsByCategory((slug || '') as ProductCategory);
+  const { data: categoryProducts = [], isLoading } = useProductsByCategory(
+    (slug || '') as ProductCategory
+  );
 
   if (!category) {
     return (
@@ -34,7 +38,7 @@ export function CategoryPage() {
         <p className="text-sm text-text-muted mt-1">{category.description}</p>
       </div>
 
-      <ProductGrid products={categoryProducts} />
+      {isLoading ? <LoadingPulse /> : <ProductGrid products={categoryProducts} />}
     </div>
   );
 }

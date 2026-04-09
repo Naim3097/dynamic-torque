@@ -20,6 +20,7 @@ class SidebarNav extends StatelessWidget {
     _NavItem(icon: Icons.shopping_bag_outlined, activeIcon: Icons.shopping_bag, label: 'Orders'),
     _NavItem(icon: Icons.inventory_2_outlined, activeIcon: Icons.inventory_2, label: 'Products'),
     _NavItem(icon: Icons.people_outline, activeIcon: Icons.people, label: 'Customers'),
+    _NavItem(icon: Icons.notifications_outlined, activeIcon: Icons.notifications, label: 'Notifications'),
     _NavItem(icon: Icons.settings_outlined, activeIcon: Icons.settings, label: 'Settings'),
   ];
 

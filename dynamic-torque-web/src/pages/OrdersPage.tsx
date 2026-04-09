@@ -1,15 +1,14 @@
 import { Link } from 'react-router-dom';
-import { useOrderStore } from '@/stores/orderStore';
-import { useAuthStore } from '@/stores/authStore';
+import { useUserOrders } from '@/hooks/useOrders';
 import { formatPrice } from '@/data/products';
-import { Button } from '@/components/ui';
+import { Button, LoadingPulse } from '@/components/ui';
 import type { OrderStatus } from '@/types/order';
 
 const statusColors: Record<OrderStatus, string> = {
   pending: 'text-warning',
   confirmed: 'text-blue-bright',
   processing: 'text-blue-bright',
-  dispatched: 'text-blue-light',
+  shipped: 'text-blue-light',
   delivered: 'text-success',
   cancelled: 'text-error',
 };
@@ -18,28 +17,18 @@ const statusLabels: Record<OrderStatus, string> = {
   pending: 'Pending',
   confirmed: 'Confirmed',
   processing: 'Processing',
-  dispatched: 'Dispatched',
+  shipped: 'Shipped',
   delivered: 'Delivered',
   cancelled: 'Cancelled',
 };
 
 export function OrdersPage() {
-  const user = useAuthStore(s => s.user);
-  const allOrders = useOrderStore(s => s.orders);
+  const { data: orders = [], isLoading } = useUserOrders();
 
-  // Show user's orders if logged in, otherwise show all local orders
-  const orders = user
-    ? allOrders.filter(o => o.shipping.email === user.email)
-    : allOrders;
-
-  if (!user) {
+  if (isLoading) {
     return (
-      <div className="container-main text-center" style={{ paddingTop: '6rem', paddingBottom: '4rem' }}>
-        <h1 className="font-heading font-bold text-3xl text-white mb-3">Your Orders</h1>
-        <p className="text-sm text-text-muted mb-8">Sign in to view your order history.</p>
-        <Link to="/login">
-          <Button variant="primary" size="md">Sign in</Button>
-        </Link>
+      <div className="container-main" style={{ paddingTop: '6rem' }}>
+        <LoadingPulse />
       </div>
     );
   }
@@ -59,10 +48,12 @@ export function OrdersPage() {
   return (
     <div className="container-main" style={{ paddingTop: '2.5rem', paddingBottom: '4rem' }}>
       <h1 className="font-heading font-bold text-3xl text-white mb-2">Your Orders</h1>
-      <p className="text-sm text-text-muted mb-10">{orders.length} {orders.length === 1 ? 'order' : 'orders'}</p>
+      <p className="text-sm text-text-muted mb-10">
+        {orders.length} {orders.length === 1 ? 'order' : 'orders'}
+      </p>
 
       <div className="flex flex-col gap-3">
-        {orders.map(order => (
+        {orders.map((order) => (
           <Link
             key={order.id}
             to={`/orders/${order.id}`}
@@ -71,7 +62,11 @@ export function OrdersPage() {
             <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-6">
               <span className="text-sm font-mono text-white font-medium">{order.orderNumber}</span>
               <span className="text-[13px] text-text-muted">
-                {new Date(order.createdAt).toLocaleDateString('en-MY', { day: 'numeric', month: 'short', year: 'numeric' })}
+                {new Date(order.createdAt).toLocaleDateString('en-MY', {
+                  day: 'numeric',
+                  month: 'short',
+                  year: 'numeric',
+                })}
               </span>
               <span className={`text-[13px] font-medium ${statusColors[order.status]}`}>
                 {statusLabels[order.status]}

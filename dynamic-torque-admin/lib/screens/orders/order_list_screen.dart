@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../config/theme.dart';
 import '../../models/order_model.dart';
-import '../../services/seed_data.dart';
+import '../../services/order_service.dart';
 import '../../utils/formatters.dart';
 import '../../widgets/common/status_badge.dart';
 import 'order_detail_screen.dart';
@@ -16,10 +16,36 @@ class OrderListScreen extends StatefulWidget {
 class _OrderListScreenState extends State<OrderListScreen> {
   String _statusFilter = 'all';
   String _search = '';
+  List<Order> _allOrders = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final data = await OrderService.instance.fetchAll();
+      if (!mounted) return;
+      setState(() {
+        _allOrders = data;
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint('Order fetch error: $e');
+      if (mounted) setState(() => _loading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    List<Order> orders = SeedData.orders;
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    List<Order> orders = _allOrders;
 
     // Filter
     if (_statusFilter != 'all') {

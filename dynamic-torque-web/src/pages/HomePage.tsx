@@ -1,11 +1,12 @@
 import { Link } from 'react-router-dom';
-import { Button } from '@/components/ui';
+import { Button, LoadingPulse } from '@/components/ui';
 import { ProductGrid } from '@/components/product/ProductGrid';
-import { categories, getFeaturedProducts } from '@/data/products';
+import { categories } from '@/data/products';
+import { useFeaturedProducts } from '@/hooks/useProducts';
 import logo from '@/assets/logo.png';
 
 export function HomePage() {
-  const featured = getFeaturedProducts();
+  const { data: featured = [], isLoading } = useFeaturedProducts();
 
   return (
     <>
@@ -81,7 +82,7 @@ export function HomePage() {
               View all &rarr;
             </Link>
           </div>
-          <ProductGrid products={featured} />
+          {isLoading ? <LoadingPulse /> : <ProductGrid products={featured} />}
         </div>
       </section>
 

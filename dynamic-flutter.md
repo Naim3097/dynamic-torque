@@ -9,29 +9,30 @@
 
 ## 1. Overview
 
-The Flutter admin dashboard is the internal SaaS tool used by the Dynamic Torque team to manage every aspect of the marketplace backend — products, inventory, orders, customers, financials, and notifications. It connects to the same Firebase backend as the React web app.
+The Flutter admin dashboard is the internal SaaS tool used by the Dynamic Torque team to manage every aspect of the marketplace backend — products, inventory, orders, customers, financials, and notifications. It shares the same **Supabase** project as the React web app for data, auth, and storage, and uses **Firebase Cloud Messaging (FCM)** purely to dispatch push notifications to customers.
 
 ---
 
 ## 2. Tech Stack
 
-| Layer              | Technology                                        |
-|--------------------|---------------------------------------------------|
-| Framework          | Flutter 3.x (Web primary, Desktop secondary)      |
-| Language           | Dart                                              |
-| State Management   | Riverpod 2.x (or Bloc)                            |
-| Routing            | GoRouter                                          |
-| Backend            | Firebase (shared with React web app)              |
-| Auth               | Firebase Authentication (Admin role-gated)        |
-| Database           | Cloud Firestore                                   |
-| Storage            | Firebase Cloud Storage                            |
-| Notifications      | Firebase Cloud Messaging (send to customers)      |
-| Charts             | fl_chart                                          |
-| PDF Generation     | pdf / printing packages                           |
-| Excel Export       | syncfusion_flutter_xlsio or csv                   |
-| Local Storage      | shared_preferences / Hive                         |
-| HTTP               | dio (for any REST endpoints)                      |
-| Testing            | flutter_test + integration_test + mockito          |
+| Layer              | Technology                                             |
+|--------------------|--------------------------------------------------------|
+| Framework          | Flutter 3.x (Web primary, Desktop secondary)           |
+| Language           | Dart                                                   |
+| State Management   | Riverpod 2.x (or Bloc)                                 |
+| Routing            | GoRouter                                               |
+| Backend            | Supabase (shared Postgres project with React app)     |
+| Auth               | Supabase Auth via `supabase_flutter` (admin role-gated via JWT claims) |
+| Database           | Supabase Postgres (`supabase_flutter` client)         |
+| Realtime           | Supabase Realtime (live orders, stock, notifications)  |
+| Storage            | Supabase Storage (product images, invoices, exports)   |
+| Push Notifications | FCM via Supabase Edge Functions (send) — admin app does NOT embed Firebase SDK for receiving |
+| Charts             | fl_chart                                               |
+| PDF Generation     | pdf / printing packages                                |
+| Excel Export       | syncfusion_flutter_xlsio or csv                        |
+| Local Storage      | shared_preferences / Hive                              |
+| HTTP               | dio (for any REST endpoints / Edge Function calls)     |
+| Testing            | flutter_test + integration_test + mockito              |
 
 ---
 
@@ -44,7 +45,7 @@ dynamic-torque-admin/
 │   ├── app.dart
 │   ├── router.dart
 │   ├── config/
-│   │   ├── firebase_config.dart
+│   │   ├── supabase_config.dart         # Supabase URL + anon key init
 │   │   ├── theme.dart                   # Brand theme from ui-ux.md
 │   │   └── constants.dart
 │   ├── models/
@@ -63,13 +64,14 @@ dynamic-torque-admin/
 │   │   ├── analytics_provider.dart
 │   │   └── notification_provider.dart
 │   ├── services/
-│   │   ├── firebase_service.dart
-│   │   ├── auth_service.dart
+│   │   ├── supabase_service.dart        # SupabaseClient singleton
+│   │   ├── auth_service.dart            # Wraps supabase.auth + role claim check
 │   │   ├── product_service.dart
 │   │   ├── order_service.dart
 │   │   ├── inventory_service.dart
+│   │   ├── realtime_service.dart        # Supabase Realtime channels
 │   │   ├── analytics_service.dart
-│   │   ├── notification_service.dart
+│   │   ├── notification_service.dart    # Calls Edge Function that sends FCM
 │   │   └── export_service.dart          # PDF/Excel generation
 │   ├── screens/
 │   │   ├── auth/
@@ -139,10 +141,11 @@ dynamic-torque-admin/
 | Warehouse     | Inventory only — stock counts, adjustments, receiving         |
 
 ### Auth Flow
-- Firebase Authentication (email/password only for admin)
-- Custom claims in Firebase for role assignment: `{ role: 'super_admin' }`
-- Role-based route guards in GoRouter
+- Supabase Auth (email/password only for admin accounts)
+- Role assignment stored in a `public.admin_users` table (or in `raw_app_meta_data.role` on `auth.users`); role is surfaced in the JWT via a Postgres function so it can be read client-side and enforced by RLS
+- Role-based route guards in GoRouter (reads role from current session JWT)
 - Session timeout after 30 minutes of inactivity
+- Admin and customer accounts live in the same `auth.users` table — the `admin_users` row (or role claim) is what grants access to the Flutter app
 
 ---
 
@@ -265,7 +268,7 @@ Pending → Confirmed → Processing → Shipped → Delivered
               ↓                       ↓
            Cancelled              Cancelled
 ```
-- Each transition triggers FCM push notification to customer (via React web app)
+- Each status transition writes to the `orders` table; a database trigger + Edge Function then sends an FCM push to the customer's registered tokens (see §10)
 
 ---
 
@@ -327,7 +330,7 @@ Pending → Confirmed → Processing → Shipped → Delivered
 
 ### 5.7 Notification Composer
 
-Send push notifications to customers via Firebase Cloud Messaging.
+Compose and dispatch push notifications to customers. The admin app writes the broadcast to a `public.notification_broadcasts` table; a Supabase Edge Function fans it out to the target audience's `fcm_tokens` via the FCM HTTP v1 API, and also inserts matching rows into `public.notifications` so the in-app feed updates via Realtime.
 
 **Compose Form:**
 | Field         | Type                | Notes                           |
@@ -557,83 +560,162 @@ Based on the spare parts categories from the marketplace:
 
 ---
 
-## 10. Firebase Security Rules (Admin)
+## 10. Supabase RLS Policies (Admin) + FCM Send Flow
 
-```javascript
-// Firestore rules — admin sections
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
+### 10.1 Row-Level Security
+All tables have RLS enabled. Admin access is gated by a helper function that reads the role from the JWT.
 
-    // Helper: check if user is admin
-    function isAdmin() {
-      return request.auth != null &&
-             request.auth.token.role in ['super_admin', 'manager', 'sales', 'warehouse'];
-    }
+```sql
+-- Helper: check admin role from JWT custom claim (set via Postgres fn on auth hook)
+create or replace function public.auth_role() returns text
+language sql stable as $$
+  select coalesce(
+    (current_setting('request.jwt.claims', true)::jsonb -> 'app_metadata' ->> 'role'),
+    ''
+  );
+$$;
 
-    function isSuperAdmin() {
-      return request.auth != null &&
-             request.auth.token.role == 'super_admin';
-    }
+create or replace function public.is_admin() returns boolean
+language sql stable as $$
+  select public.auth_role() in ('super_admin', 'manager', 'sales', 'warehouse');
+$$;
 
-    // Products — admins can CRUD, customers can read active only
-    match /products/{productId} {
-      allow read: if true;  // public catalog
-      allow write: if isAdmin();
-    }
+create or replace function public.is_super_admin() returns boolean
+language sql stable as $$
+  select public.auth_role() = 'super_admin';
+$$;
 
-    // Orders — admins can read all, customers read own
-    match /orders/{orderId} {
-      allow read: if isAdmin() || request.auth.uid == resource.data.userId;
-      allow create: if request.auth != null;
-      allow update: if isAdmin();
-    }
+-- PRODUCTS: public read of active rows, admin CRUD
+alter table public.products enable row level security;
 
-    // Inventory logs — admin only
-    match /inventoryLogs/{logId} {
-      allow read, write: if isAdmin();
-    }
+create policy "products_public_read"
+  on public.products for select
+  using (is_active = true or public.is_admin());
 
-    // Transactions — admin only
-    match /transactions/{txId} {
-      allow read, write: if isAdmin();
-    }
+create policy "products_admin_write"
+  on public.products for all
+  using (public.is_admin())
+  with check (public.is_admin());
 
-    // Users — admin can read all, user can read/write own
-    match /users/{userId} {
-      allow read: if isAdmin() || request.auth.uid == userId;
-      allow write: if request.auth.uid == userId;
-      allow update: if isAdmin();  // for B2B verification etc.
-    }
+-- ORDERS: customers read own, admins read/write all
+alter table public.orders enable row level security;
 
-    // Settings — super admin only
-    match /settings/{doc} {
-      allow read: if isAdmin();
-      allow write: if isSuperAdmin();
-    }
-  }
-}
+create policy "orders_owner_read"
+  on public.orders for select
+  using (auth.uid() = user_id or public.is_admin());
+
+create policy "orders_owner_create"
+  on public.orders for insert
+  with check (auth.uid() = user_id);
+
+create policy "orders_admin_update"
+  on public.orders for update
+  using (public.is_admin());
+
+-- INVENTORY LOGS, TRANSACTIONS: admin only
+alter table public.inventory_logs enable row level security;
+create policy "inventory_logs_admin" on public.inventory_logs
+  for all using (public.is_admin()) with check (public.is_admin());
+
+alter table public.transactions enable row level security;
+create policy "transactions_admin" on public.transactions
+  for all using (public.is_admin()) with check (public.is_admin());
+
+-- USERS profile table
+alter table public.users enable row level security;
+create policy "users_self_read" on public.users for select
+  using (auth.uid() = id or public.is_admin());
+create policy "users_self_update" on public.users for update
+  using (auth.uid() = id);
+create policy "users_admin_update" on public.users for update
+  using (public.is_admin());
+
+-- SETTINGS: super admin only
+alter table public.settings enable row level security;
+create policy "settings_admin_read" on public.settings for select
+  using (public.is_admin());
+create policy "settings_super_write" on public.settings for all
+  using (public.is_super_admin()) with check (public.is_super_admin());
 ```
+
+### 10.2 FCM Send Flow (Edge Function)
+```ts
+// supabase/functions/send-push/index.ts (Deno)
+// Triggered by a database webhook on orders/notification_broadcasts inserts/updates.
+import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { JWT } from 'npm:google-auth-library';
+
+const supabase = createClient(
+  Deno.env.get('SUPABASE_URL')!,
+  Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+);
+
+const serviceAccount = JSON.parse(Deno.env.get('FIREBASE_SERVICE_ACCOUNT_JSON')!);
+
+async function getAccessToken() {
+  const jwt = new JWT({
+    email: serviceAccount.client_email,
+    key: serviceAccount.private_key,
+    scopes: ['https://www.googleapis.com/auth/firebase.messaging'],
+  });
+  const { access_token } = await jwt.authorize();
+  return access_token!;
+}
+
+Deno.serve(async (req) => {
+  const { userId, title, body, data } = await req.json();
+
+  const { data: tokens } = await supabase
+    .from('fcm_tokens')
+    .select('token')
+    .eq('user_id', userId);
+
+  const accessToken = await getAccessToken();
+  const projectId = serviceAccount.project_id;
+
+  await Promise.all((tokens ?? []).map((t) =>
+    fetch(`https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        message: { token: t.token, notification: { title, body }, data },
+      }),
+    })
+  ));
+
+  // Mirror into in-app feed so Realtime picks it up
+  await supabase.from('notifications').insert({
+    user_id: userId, title, body, data, type: 'system',
+  });
+
+  return new Response('ok');
+});
+```
+
+The Flutter admin app never embeds the Firebase SDK — it only calls this Edge Function (or writes rows that trigger it).
 
 ---
 
 ## 11. Development Phases (Flutter Admin)
 
 ### Phase 1 — Core Admin MVP
-- [ ] Flutter project setup + Firebase integration
-- [ ] Admin authentication + role-based routing
-- [ ] Dashboard screen with KPI cards
-- [ ] Product CRUD (list, add, edit, deactivate)
-- [ ] Basic inventory view with stock counts
+- [ ] Flutter project setup + `supabase_flutter` integration
+- [ ] Admin authentication (Supabase Auth) + role-based routing using JWT claims
+- [ ] Dashboard screen with KPI cards (queries via Supabase SQL views)
+- [ ] Product CRUD (list, add, edit, deactivate) against Postgres + Storage
+- [ ] Basic inventory view with stock counts, live-updating via Supabase Realtime
 - [ ] Order list + detail + status updates
-- [ ] Deploy to Firebase Hosting (Flutter web)
+- [ ] Deploy Flutter web build to Vercel / Cloudflare Pages
 
 ### Phase 2 — Inventory & Customers
-- [ ] Stock adjustment module with audit log
-- [ ] Low stock alerts and threshold management
+- [ ] Stock adjustment module with `inventory_logs` audit table
+- [ ] Low stock alerts via Postgres trigger → Edge Function → FCM
 - [ ] Customer list + B2B verification workflow
-- [ ] Stock counters and inventory valuation
-- [ ] Notification composer (send FCM to customers)
+- [ ] Stock counters and inventory valuation (Postgres views)
+- [ ] Notification composer → Edge Function → FCM fan-out
 
 ### Phase 3 — Accounting & Reports
 - [ ] Transaction entry (income/expense)
@@ -656,15 +738,20 @@ service cloud.firestore {
 
 ## 12. Integration Points (React ↔ Flutter)
 
-Both apps share the same Firebase project:
+Both apps share **one Supabase project** for data/auth/storage/realtime and **one Firebase project** used solely for FCM push delivery.
 
-| Shared Resource        | Used By                 |
-|------------------------|-------------------------|
-| Firestore `/products`  | React (read), Flutter (CRUD) |
-| Firestore `/orders`    | React (create), Flutter (manage) |
-| Firestore `/users`     | React (own profile), Flutter (all users) |
-| Firebase Storage       | React (display), Flutter (upload) |
-| FCM                    | React (receive), Flutter (send) |
-| Firebase Auth          | Both (different user pools via custom claims) |
+| Shared Resource                | Used By                                              |
+|--------------------------------|------------------------------------------------------|
+| `public.products` (Postgres)   | React (read active), Flutter (CRUD, read all)        |
+| `public.orders` (Postgres)     | React (create via `place_order` RPC), Flutter (manage) |
+| `public.users` (Postgres)      | React (own profile), Flutter (all users, admin ops)  |
+| Supabase Storage buckets       | React (display via public URLs), Flutter (upload)    |
+| Supabase Realtime              | React (own orders/notifications), Flutter (live dashboard, stock, orders) |
+| Supabase Auth (`auth.users`)   | Both — role claim distinguishes customers from admins |
+| FCM (Firebase)                 | React (receive push on web), Flutter (does NOT receive — triggers Edge Function to send) |
+| Supabase Edge Functions        | Both (business logic, FCM send, payment webhooks)    |
 
-**Rule:** The React web app is the **customer-facing storefront**. The Flutter app is the **back-office**. No admin features should exist in the React app. No shopping/checkout features should exist in the Flutter app.
+**Rules:**
+- The React web app is the **customer-facing storefront**. The Flutter app is the **back-office**. No admin features in React. No shopping/checkout in Flutter.
+- The Flutter admin app never imports the Firebase SDK — push sending is done server-side in Edge Functions so service account credentials stay out of the client.
+- All schema changes live in `supabase/migrations/` at the repo root and are applied to both shared environments by CI.

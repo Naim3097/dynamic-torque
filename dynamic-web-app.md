@@ -1,8 +1,9 @@
 # MNA Dynamic Torque — React Web Application Specification
 
-> **Platform:** React JS (Vite + TypeScript)  
-> **Notifications:** Firebase Cloud Messaging (FCM)  
-> **Target:** B2B & B2C Gearbox Spare Parts Marketplace  
+> **Platform:** React JS (Vite + TypeScript)
+> **Backend:** Supabase (Postgres + Auth + Storage + Realtime)
+> **Notifications:** Firebase Cloud Messaging (FCM) — push delivery only
+> **Target:** B2B & B2C Gearbox Spare Parts Marketplace
 > **Design System:** See `ui-ux.md`
 
 ---
@@ -18,16 +19,18 @@
 | Styling            | Tailwind CSS + CSS custom properties (design tokens) |
 | UI Components      | Radix UI primitives + custom themed components (no icon-heavy component libraries) |
 | Forms              | React Hook Form + Zod validation                    |
-| Notifications      | Firebase Cloud Messaging (push) + React Hot Toast (in-app) |
-| Auth               | Firebase Authentication (Email/Password, Google)    |
-| Database           | Firebase Firestore (or REST API to backend)         |
-| Storage            | Firebase Storage (product images)                   |
+| Push Notifications | Firebase Cloud Messaging (web push) + React Hot Toast (in-app) |
+| Auth               | Supabase Auth (Email/Password, Google OAuth)        |
+| Database           | Supabase Postgres (via `@supabase/supabase-js`)     |
+| Realtime           | Supabase Realtime (Postgres changes subscriptions)  |
+| Storage            | Supabase Storage (product images, invoices)         |
+| Row-Level Security | Supabase RLS policies (per-user / per-role access)  |
 | Payments           | Stripe / PayPal integration                         |
 | Search             | Algolia or Meilisearch (product search)             |
 | Charts             | Recharts (for any dashboard analytics)              |
 | Testing            | Vitest + React Testing Library + Playwright (E2E)   |
 | Linting            | ESLint + Prettier                                   |
-| CI/CD              | GitHub Actions → Firebase Hosting / Vercel          |
+| CI/CD              | GitHub Actions → Vercel (hosting) + Supabase (migrations) |
 
 ---
 
@@ -106,11 +109,12 @@ dynamic-torque-web/
 │   │   ├── authStore.ts
 │   │   └── uiStore.ts
 │   ├── services/
-│   │   ├── firebase.ts               # Firebase config & init
-│   │   ├── firebaseMessaging.ts       # FCM setup
+│   │   ├── supabase.ts                # Supabase client init
+│   │   ├── firebaseMessaging.ts       # FCM web push setup (notification delivery only)
 │   │   ├── productService.ts
 │   │   ├── orderService.ts
-│   │   ├── authService.ts
+│   │   ├── authService.ts             # Wraps supabase.auth
+│   │   ├── realtimeService.ts         # Supabase Realtime channel helpers
 │   │   └── paymentService.ts
 │   ├── types/
 │   │   ├── product.ts
@@ -156,7 +160,7 @@ interface Product {
   currency: string;                        // "MYR", "USD" etc.
   wholesalePrice?: number;                 // B2B pricing
   minWholesaleQty?: number;
-  images: string[];                        // Firebase Storage URLs
+  images: string[];                        // Supabase Storage public URLs
   thumbnailUrl: string;
   stockQty: number;
   stockStatus: 'in_stock' | 'low_stock' | 'out_of_stock';
@@ -164,8 +168,8 @@ interface Product {
   tags: string[];
   isFeatured: boolean;
   isActive: boolean;
-  createdAt: Timestamp;
-  updatedAt: Timestamp;
+  createdAt: string;                       // ISO timestamp (Postgres `timestamptz`)
+  updatedAt: string;
 }
 
 type ProductCategory =
@@ -182,7 +186,7 @@ type ProductCategory =
 ### 3.2 User
 ```typescript
 interface User {
-  uid: string;
+  id: string;                              // Supabase auth.users.id (UUID)
   email: string;
   displayName: string;
   phone: string;
@@ -195,14 +199,24 @@ interface User {
   addresses: Address[];
   defaultAddressId?: string;
   wishlist: string[];                      // product IDs
-  fcmTokens: string[];                     // Firebase Cloud Messaging tokens
   notificationPreferences: {
     orderUpdates: boolean;
     promotions: boolean;
     stockAlerts: boolean;
   };
   isVerified: boolean;
-  createdAt: Timestamp;
+  createdAt: string;
+}
+
+// FCM device tokens live in a separate table so one user can have many devices.
+interface FcmToken {
+  id: string;
+  userId: string;                          // FK → users.id
+  token: string;                           // FCM registration token
+  platform: 'web' | 'android' | 'ios';
+  userAgent?: string;
+  createdAt: string;
+  lastSeenAt: string;
 }
 
 interface Address {
@@ -261,8 +275,8 @@ interface Order {
   trackingNumber?: string;
   notes?: string;
   poNumber?: string;                       // B2B purchase order
-  createdAt: Timestamp;
-  updatedAt: Timestamp;
+  createdAt: string;
+  updatedAt: string;
 }
 
 interface OrderItem {
@@ -287,7 +301,7 @@ interface AppNotification {
   imageUrl?: string;
   data?: Record<string, string>;           // deep-link data
   isRead: boolean;
-  createdAt: Timestamp;
+  createdAt: string;
 }
 ```
 
@@ -340,61 +354,138 @@ const routes = [
 
 ---
 
-## 6. Firebase Integration
+## 6. Backend Integration (Supabase + FCM)
 
-### 6.1 Firebase Services Used
-| Service               | Purpose                                         |
-|-----------------------|-------------------------------------------------|
-| Authentication        | Email/password + Google sign-in                 |
-| Firestore             | Products, orders, users, notifications          |
-| Cloud Storage         | Product images, invoices                        |
-| Cloud Messaging (FCM) | Push notifications (order updates, promos)      |
-| Hosting               | Static web app deployment                       |
-| Cloud Functions       | Order processing, stock triggers, email sends   |
+The stack splits responsibilities between two vendors:
 
-### 6.2 Firestore Collections
+- **Supabase** owns data, auth, storage, realtime, and server-side business logic.
+- **Firebase Cloud Messaging (FCM)** is used *only* as the push delivery pipe. No Firestore, no Firebase Auth, no Firebase Storage.
+
+### 6.1 Supabase Services Used
+| Service        | Purpose                                                              |
+|----------------|----------------------------------------------------------------------|
+| Auth           | Email/password + Google OAuth; issues JWTs used by RLS               |
+| Postgres       | Products, orders, users, notifications, inventory logs               |
+| Storage        | Product images, invoices, PDF exports (buckets with RLS)             |
+| Realtime       | Live order status, stock level, and notification updates             |
+| Edge Functions | Order processing, stock triggers, FCM send, email sends              |
+| RLS Policies   | Enforce per-user and per-role access directly in the database        |
+
+### 6.2 Postgres Schema (tables)
 ```
-/products/{productId}
-/users/{userId}
-/orders/{orderId}
-/notifications/{notificationId}
-/categories/{categoryId}
-/promos/{promoId}
+public.products              -- catalog
+public.categories            -- 8 spare part categories
+public.users                 -- profile rows, 1:1 with auth.users
+public.addresses             -- FK → users
+public.orders                -- header
+public.order_items           -- FK → orders
+public.notifications         -- in-app feed
+public.fcm_tokens            -- device tokens per user
+public.promos                -- promo codes
+public.inventory_logs        -- stock movement audit trail
+```
+All tables use `uuid` PKs, `timestamptz` for created/updated, and are owned by the `authenticated` role via RLS. Stock mutations go through a Postgres function (`rpc: place_order`) wrapped in a transaction so quantity checks and decrements are atomic.
+
+### 6.3 Supabase Client Setup
+```typescript
+// services/supabase.ts
+import { createClient } from '@supabase/supabase-js';
+import type { Database } from '@/types/database'; // generated via `supabase gen types typescript`
+
+export const supabase = createClient<Database>(
+  import.meta.env.VITE_SUPABASE_URL,
+  import.meta.env.VITE_SUPABASE_ANON_KEY,
+  {
+    auth: { persistSession: true, autoRefreshToken: true },
+    realtime: { params: { eventsPerSecond: 10 } },
+  }
+);
 ```
 
-### 6.3 Firebase Cloud Messaging Setup
+### 6.4 Realtime Subscriptions
+Realtime is a first-class requirement for this project. Customers see live order status; admins see live stock and incoming orders.
+
+```typescript
+// services/realtimeService.ts
+import { supabase } from './supabase';
+
+export function subscribeToOrder(orderId: string, onChange: (row: any) => void) {
+  return supabase
+    .channel(`order:${orderId}`)
+    .on(
+      'postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: 'orders', filter: `id=eq.${orderId}` },
+      (payload) => onChange(payload.new)
+    )
+    .subscribe();
+}
+
+export function subscribeToUserNotifications(userId: string, onInsert: (row: any) => void) {
+  return supabase
+    .channel(`notifications:${userId}`)
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${userId}` },
+      (payload) => onInsert(payload.new)
+    )
+    .subscribe();
+}
+```
+Channels are unsubscribed on component unmount. Enable Realtime on each table via `alter publication supabase_realtime add table public.<table>`.
+
+### 6.5 Firebase Cloud Messaging Setup (push delivery only)
+FCM is initialized purely to register a device token and receive foreground push payloads. The token is stored in `public.fcm_tokens` keyed by the Supabase user ID.
+
 ```typescript
 // services/firebaseMessaging.ts
-
+import { initializeApp } from 'firebase/app';
 import { getMessaging, getToken, onMessage } from 'firebase/messaging';
-import { app } from './firebase';
+import { supabase } from './supabase';
 
-const messaging = getMessaging(app);
+const firebaseApp = initializeApp({
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+});
+const messaging = getMessaging(firebaseApp);
 
-export async function requestNotificationPermission(): Promise<string | null> {
+export async function registerPushToken(): Promise<string | null> {
   const permission = await Notification.requestPermission();
-  if (permission === 'granted') {
-    const token = await getToken(messaging, {
-      vapidKey: import.meta.env.VITE_FIREBASE_VAPID_KEY,
-    });
-    return token;
+  if (permission !== 'granted') return null;
+
+  const token = await getToken(messaging, {
+    vapidKey: import.meta.env.VITE_FIREBASE_VAPID_KEY,
+  });
+  if (!token) return null;
+
+  const { data: { user } } = await supabase.auth.getUser();
+  if (user) {
+    await supabase.from('fcm_tokens').upsert(
+      { user_id: user.id, token, platform: 'web', last_seen_at: new Date().toISOString() },
+      { onConflict: 'token' }
+    );
   }
-  return null;
+  return token;
 }
 
-export function onForegroundMessage(callback: (payload: any) => void) {
-  return onMessage(messaging, callback);
+export function onForegroundMessage(cb: (payload: any) => void) {
+  return onMessage(messaging, cb);
 }
 ```
 
-### 6.4 Notification Triggers (Cloud Functions)
-| Trigger                  | Notification Sent To | Content                           |
-|--------------------------|----------------------|-----------------------------------|
-| Order placed             | Customer             | "Order DT-XXX confirmed!"        |
-| Order status changed     | Customer             | "Your order has been shipped"     |
-| Low stock alert          | Admin (Flutter app)  | "Clutch Plate stock below 5"     |
-| New B2B registration     | Admin                | "New B2B account pending review" |
-| Promotion broadcast      | All opted-in users   | Sale/promotion details           |
+### 6.6 Notification Triggers (Supabase Edge Functions)
+Edge Functions listen for row changes (via database webhooks) and call the FCM HTTP v1 API using a Firebase service account key stored as a Supabase secret.
+
+| Trigger                           | Sent To              | Content                           |
+|-----------------------------------|----------------------|-----------------------------------|
+| `orders` INSERT                   | Customer             | "Order DT-XXX confirmed!"         |
+| `orders` UPDATE (status changed)  | Customer             | "Your order has been shipped"     |
+| `products` UPDATE (stock < threshold) | Admin (Flutter app) | "Clutch Plate stock below 5"   |
+| `users` INSERT (account_type=b2b) | Admin                | "New B2B account pending review"  |
+| Promotion broadcast (manual)      | All opted-in users   | Sale/promotion details            |
+
+Flow: Postgres trigger/webhook → Edge Function → look up recipient FCM tokens → send via FCM HTTP v1 → also insert a row into `public.notifications` so the in-app feed updates via Realtime.
 
 ---
 
@@ -409,7 +500,7 @@ export function onForegroundMessage(callback: (payload: any) => void) {
 - Pagination (no infinite scroll — gives clearer sense of catalog size)
 
 ### 7.2 Cart & Checkout
-- Persistent cart (localStorage + Firestore sync for logged-in users)
+- Persistent cart (localStorage + Supabase `carts` table sync for logged-in users)
 - Quantity adjustment with stock validation
 - Promo code / discount application
 - Single-page checkout with clear sections (Shipping, Payment, Summary) separated by whitespace, not a multi-step wizard with progress indicators
@@ -431,8 +522,9 @@ export function onForegroundMessage(callback: (payload: any) => void) {
 - Credit terms display (Net 30 etc., managed by admin)
 - Bulk add-to-cart via CSV/SKU list
 
-### 7.5 Notifications (Firebase)
+### 7.5 Notifications (FCM + Supabase Realtime)
 - Push notification permission requested contextually (after first order, not on first visit)
+- In-app notification feed is populated via Supabase Realtime; FCM only handles background/OS-level push
 - In-app notification center: a simple dropdown list from "Notifications" text in nav, no bell icon
 - Order update notifications
 - Back-in-stock alerts (wishlist items)
@@ -461,7 +553,8 @@ export function onForegroundMessage(callback: (payload: any) => void) {
 ### Optimization Strategies
 - Code splitting per route (React.lazy + Suspense)
 - Image optimization: WebP format, srcset for responsive, lazy loading
-- Firestore query pagination (limit + startAfter cursors)
+- Supabase query pagination via `.range(from, to)` with indexed columns
+- Use Postgres indexes on `slug`, `sku`, `category`, `is_active`, and full-text search columns
 - Service Worker for offline product catalog caching
 - Preload critical fonts
 - Debounce search queries (300ms)
@@ -470,11 +563,13 @@ export function onForegroundMessage(callback: (payload: any) => void) {
 
 ## 9. Security
 
-- Firebase Security Rules on all collections (user can only read/write own data)
-- Server-side price validation in Cloud Functions (never trust client prices)
+- Supabase Row-Level Security (RLS) enabled on every table; users can only read/write their own rows
+- `service_role` key only used server-side in Edge Functions — never shipped to the browser
+- Server-side price validation in Edge Functions / `place_order` RPC (never trust client prices)
+- Stock mutations performed atomically inside Postgres transactions
 - Input sanitization (XSS prevention via React's default escaping + DOMPurify for rich text)
-- CSRF protection via Firebase Auth tokens
-- Rate limiting on Cloud Functions endpoints
+- Auth state carried via Supabase JWT (refreshed automatically)
+- Rate limiting on Edge Functions (Supabase built-in + per-IP checks)
 - Environment variables for all API keys (never committed)
 - Content Security Policy headers
 - HTTPS enforced
@@ -485,17 +580,31 @@ export function onForegroundMessage(callback: (payload: any) => void) {
 
 ```env
 # .env.example
+
+# Supabase (primary backend)
+VITE_SUPABASE_URL=
+VITE_SUPABASE_ANON_KEY=
+
+# Firebase Cloud Messaging (push delivery only — NO Firestore/Auth/Storage)
 VITE_FIREBASE_API_KEY=
-VITE_FIREBASE_AUTH_DOMAIN=
 VITE_FIREBASE_PROJECT_ID=
-VITE_FIREBASE_STORAGE_BUCKET=
 VITE_FIREBASE_MESSAGING_SENDER_ID=
 VITE_FIREBASE_APP_ID=
 VITE_FIREBASE_VAPID_KEY=
+
+# Payments & Search
 VITE_STRIPE_PUBLISHABLE_KEY=
 VITE_ALGOLIA_APP_ID=
 VITE_ALGOLIA_SEARCH_KEY=
+
 VITE_APP_URL=
+```
+
+Server-side secrets (Supabase Edge Functions — never exposed to client):
+```
+SUPABASE_SERVICE_ROLE_KEY=
+FIREBASE_SERVICE_ACCOUNT_JSON=   # for FCM HTTP v1 send
+STRIPE_SECRET_KEY=
 ```
 
 ---
@@ -510,8 +619,9 @@ VITE_APP_URL=
 
 - **CI/CD:** GitHub Actions
   - On PR → Run lint, type-check, tests
-  - On merge to `staging` → Deploy to Firebase Hosting (staging)
-  - On merge to `main` → Deploy to Firebase Hosting (production)
+  - On merge to `staging` → Deploy to Vercel (staging) + run `supabase db push` against staging project
+  - On merge to `main` → Deploy to Vercel (production) + run `supabase db push` against production project
+  - Supabase migrations stored in `supabase/migrations/` and versioned in git
 
 ---
 
@@ -520,15 +630,17 @@ VITE_APP_URL=
 ### Phase 1 — MVP (Core Marketplace)
 - [ ] Project setup (Vite + React + TypeScript + Tailwind)
 - [ ] Design system components (from ui-ux.md tokens)
-- [ ] Firebase project setup (Auth, Firestore, Storage, FCM)
+- [ ] Supabase project setup (Postgres schema, RLS policies, Storage buckets, Auth providers)
+- [ ] Firebase project setup (FCM only — no Firestore/Auth/Storage)
 - [ ] Product catalog (browse, search, filter, detail)
 - [ ] Cart functionality
-- [ ] User auth (register, login, profile)
+- [ ] User auth (register, login, profile) via Supabase Auth
 - [ ] Checkout flow (B2C)
-- [ ] Order placement + Firestore order storage
-- [ ] Push notifications (order updates)
+- [ ] Order placement via `place_order` RPC with atomic stock decrement
+- [ ] Realtime order status updates via Supabase Realtime
+- [ ] Push notifications (order updates) via Edge Function → FCM
 - [ ] Responsive design for all pages
-- [ ] Deploy to Firebase Hosting
+- [ ] Deploy to Vercel
 
 ### Phase 2 — B2B & Enhanced Features
 - [ ] B2B registration + verification flow

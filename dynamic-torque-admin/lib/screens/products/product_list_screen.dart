@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import '../../config/theme.dart';
 import '../../config/constants.dart';
 import '../../models/product_model.dart';
-import '../../services/seed_data.dart';
+import '../../services/product_service.dart';
 import '../../utils/formatters.dart';
 import 'product_form_screen.dart';
 
@@ -17,10 +17,36 @@ class _ProductListScreenState extends State<ProductListScreen> {
   String _categoryFilter = 'all';
   String _stockFilter = 'all';
   String _search = '';
+  List<Product> _allProducts = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final data = await ProductService.instance.fetchAll();
+      if (!mounted) return;
+      setState(() {
+        _allProducts = data;
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint('Product fetch error: $e');
+      if (mounted) setState(() => _loading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    List<Product> products = SeedData.products;
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    List<Product> products = _allProducts;
 
     // Filter
     if (_categoryFilter != 'all') {

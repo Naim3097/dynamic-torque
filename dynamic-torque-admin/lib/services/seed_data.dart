@@ -1,3 +1,9 @@
+// ------------------------------------------------------------------
+// ALL DATA IN THIS FILE IS ENTIRELY FICTIONAL.
+// Names, emails, phone numbers, addresses, and companies are made up
+// for demonstration / development purposes only. No real PII is used.
+// ------------------------------------------------------------------
+
 import '../models/product_model.dart';
 import '../models/order_model.dart';
 import '../models/user_model.dart';
@@ -448,7 +454,7 @@ class SeedData {
             fullName: 'Ahmad Razak',
             company: 'Razak Gearbox Workshop',
             phone: '+60 12-345 6789',
-            email: 'ahmad@razakgearbox.com',
+            email: 'ahmad.razak@example.com',
             addressLine1: '12, Jalan Industri 3',
             city: 'Shah Alam',
             state: 'Selangor',
@@ -487,7 +493,7 @@ class SeedData {
           shipping: const ShippingAddress(
             fullName: 'Lee Wei Ming',
             phone: '+60 16-789 0123',
-            email: 'wm.lee@gmail.com',
+            email: 'wm.lee@example.com',
             addressLine1: '88, Jalan Merdeka',
             city: 'Kuala Lumpur',
             state: 'W.P. Kuala Lumpur',
@@ -535,7 +541,7 @@ class SeedData {
             fullName: 'Muthu Samy',
             company: 'MSK Auto Parts Sdn Bhd',
             phone: '+60 19-456 7890',
-            email: 'muthu@mskauto.com.my',
+            email: 'muthu.samy@example.com',
             addressLine1: '5, Lorong Perindustrian 7',
             addressLine2: 'Kawasan Perindustrian Puchong',
             city: 'Puchong',
@@ -567,7 +573,7 @@ class SeedData {
           shipping: const ShippingAddress(
             fullName: 'Tan Ah Kow',
             phone: '+60 17-234 5678',
-            email: 'tankow@outlook.com',
+            email: 'tan.ahkow@example.com',
             addressLine1: '33, Jalan Bukit Bintang',
             city: 'Johor Bahru',
             state: 'Johor',
@@ -607,7 +613,7 @@ class SeedData {
             fullName: 'Ahmad Razak',
             company: 'Razak Gearbox Workshop',
             phone: '+60 12-345 6789',
-            email: 'ahmad@razakgearbox.com',
+            email: 'ahmad.razak@example.com',
             addressLine1: '12, Jalan Industri 3',
             city: 'Shah Alam',
             state: 'Selangor',
@@ -627,7 +633,7 @@ class SeedData {
   static List<AppUser> get customers => [
         AppUser(
           id: 'u-1',
-          email: 'ahmad@razakgearbox.com',
+          email: 'ahmad.razak@example.com',
           fullName: 'Ahmad Razak',
           phone: '+60 12-345 6789',
           company: 'Razak Gearbox Workshop',
@@ -638,7 +644,7 @@ class SeedData {
         ),
         AppUser(
           id: 'u-2',
-          email: 'wm.lee@gmail.com',
+          email: 'wm.lee@example.com',
           fullName: 'Lee Wei Ming',
           phone: '+60 16-789 0123',
           totalOrders: 3,
@@ -647,7 +653,7 @@ class SeedData {
         ),
         AppUser(
           id: 'u-3',
-          email: 'muthu@mskauto.com.my',
+          email: 'muthu.samy@example.com',
           fullName: 'Muthu Samy',
           phone: '+60 19-456 7890',
           company: 'MSK Auto Parts Sdn Bhd',
@@ -658,7 +664,7 @@ class SeedData {
         ),
         AppUser(
           id: 'u-4',
-          email: 'tankow@outlook.com',
+          email: 'tan.ahkow@example.com',
           fullName: 'Tan Ah Kow',
           phone: '+60 17-234 5678',
           totalOrders: 1,
@@ -667,7 +673,7 @@ class SeedData {
         ),
         AppUser(
           id: 'u-5',
-          email: 'fatimah@ymail.com',
+          email: 'fatimah.zahra@example.com',
           fullName: 'Fatimah Zahra',
           phone: '+60 13-567 8901',
           company: 'FZ Transmission Services',

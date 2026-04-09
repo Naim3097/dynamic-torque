@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
-import { useOrderStore } from '@/stores/orderStore';
+import { useUserOrders } from '@/hooks/useOrders';
 import { Input, Button } from '@/components/ui';
 import { formatPrice } from '@/data/products';
 
@@ -10,7 +10,7 @@ export function AccountPage() {
   const user = useAuthStore(s => s.user);
   const logout = useAuthStore(s => s.logout);
   const updateProfile = useAuthStore(s => s.updateProfile);
-  const orders = useOrderStore(s => s.orders).filter(o => o.shipping.email === user?.email);
+  const { data: orders = [] } = useUserOrders();
 
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({
@@ -31,14 +31,14 @@ export function AccountPage() {
     );
   }
 
-  function handleSave(e: React.FormEvent) {
+  async function handleSave(e: React.FormEvent) {
     e.preventDefault();
-    updateProfile(form);
+    await updateProfile(form);
     setEditing(false);
   }
 
-  function handleLogout() {
-    logout();
+  async function handleLogout() {
+    await logout();
     navigate('/');
   }
 
